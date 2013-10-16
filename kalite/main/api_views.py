@@ -1,32 +1,41 @@
+import cgi
+import copy
 import json
 import re
-import requests
 from annoying.functions import get_object_or_None
-from requests.exceptions import ConnectionError, HTTPError
+from functools import partial
 
-from django.core.exceptions import ValidationError
+from django.contrib import messages
+from django.contrib.messages.api import get_messages
+from django.core.exceptions import ValidationError, PermissionDenied
 from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import simplejson
+from django.utils.safestring import SafeString, SafeUnicode, mark_safe
 from django.utils.translation import ugettext as _
+from django.views.decorators.cache import cache_control, cache_page
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
+from django.views.decorators.gzip import gzip_page
 
 import settings
+import version
 from .api_forms import ExerciseLogForm, VideoLogForm
-from .models import FacilityUser, VideoLog, ExerciseLog, VideoFile
+from .models import VideoLog, ExerciseLog, VideoFile
 from config.models import Settings
-from main import topicdata
-from securesync.models import FacilityGroup
-from shared.caching import invalidate_all_pages_related_to_video
-from utils.jobs import force_job, job_status
-from utils.videos import delete_downloaded_files
-from utils.decorators import require_admin
+from securesync.models import FacilityGroup, FacilityUser
+from shared.decorators import allow_api_profiling, require_admin
+from shared.decorators import allow_api_profiling, backend_cache_page, require_admin
+from shared.jobs import force_job, job_status
+from shared.topic_tools import get_flat_topic_tree 
+from shared.videos import delete_downloaded_files
 from utils.general import break_into_chunks
-from utils.internet import JsonResponse
+from utils.internet import api_handle_error_with_json, JsonResponse
+from utils.mplayer_launcher import play_video_in_new_thread
 from utils.orderedset import OrderedSet
-from utils.decorators import api_handle_error_with_json
 
 
 class student_log_api(object):
+
     def __init__(self, logged_out_message):
         self.logged_out_message = logged_out_message
 
@@ -56,16 +65,20 @@ def save_video_log(request):
         raise ValidationError(form.errors)
     data = form.data
 
-    # More robust extraction of previous object
-    videolog = VideoLog.get_or_initialize(user=request.session["facility_user"], youtube_id=data["youtube_id"])
-    videolog.total_seconds_watched  += data["seconds_watched"]
-    videolog.points = max(videolog.points, data["points"])  # videolog.points cannot be None
-
     try:
-        videolog.full_clean()
-        videolog.save()
+        videolog = VideoLog.update_video_log(
+            facility_user=request.session["facility_user"],
+            youtube_id=data["youtube_id"],
+            total_seconds_watched=data["total_seconds_watched"],  # don't set incrementally, to avoid concurrency issues
+            points=data["points"],
+            language=data.get("language") or request.language,
+        )
+
     except ValidationError as e:
         return JsonResponse({"error": "Could not save VideoLog: %s" % e}, status=500)
+
+    if "points" in request.session:
+        request.session["points"] = compute_total_points(user)
 
     return JsonResponse({
         "points": videolog.points,
@@ -88,19 +101,24 @@ def save_exercise_log(request):
     data = form.data
 
     # More robust extraction of previous object
-    exerciselog = ExerciseLog.get_or_initialize(user=request.session["facility_user"], exercise_id=data["exercise_id"])
+    user = request.session["facility_user"]
+    (exerciselog, was_created) = ExerciseLog.get_or_initialize(user=user, exercise_id=data["exercise_id"])
     previously_complete = exerciselog.complete
 
-    exerciselog.attempts += 1
+    exerciselog.attempts = data["attempts"]  # don't increment, because we fail to save some requests
     exerciselog.streak_progress = data["streak_progress"]
     exerciselog.points = data["points"]
+    exerciselog.language = data.get("language") or request.language
 
     try:
         exerciselog.full_clean()
         exerciselog.save()
     except ValidationError as e:
-        return JsonResponse({"error": "Could not save ExerciseLog: %s" % e}, status=500)
+        return JsonResponse({"error": _("Could not save ExerciseLog") + u": %s" % e}, status=500)
 
+    if "points" in request.session:
+        request.session["points"] = compute_total_points(user)
+        
     # Special message if you've just completed.
     #   NOTE: it's important to check this AFTER calling save() above.
     if not previously_complete and exerciselog.complete:
@@ -110,12 +128,12 @@ def save_exercise_log(request):
     return JsonResponse({})
 
 
+@allow_api_profiling
 @student_log_api(logged_out_message=_("Progress not loaded."))
 def get_video_logs(request):
     """
     Given a list of youtube_ids, retrieve a list of video logs for this user.
     """
-
     data = simplejson.loads(request.raw_post_data or "[]")
     if not isinstance(data, list):
         return JsonResponse({"error": "Could not load VideoLog objects: Unrecognized input data format." % e}, status=500)
@@ -130,6 +148,9 @@ def get_video_logs(request):
 
 
 def _get_video_log_dict(request, user, youtube_id):
+    """
+    Utility that converts a video log to a dictionary
+    """
     if not youtube_id:
         return {}
     try:
@@ -144,183 +165,38 @@ def _get_video_log_dict(request, user, youtube_id):
     }
 
 
+@allow_api_profiling
 @student_log_api(logged_out_message=_("Progress not loaded."))
 def get_exercise_logs(request):
     """
     Given a list of exercise_ids, retrieve a list of video logs for this user.
     """
-
     data = simplejson.loads(request.raw_post_data or "[]")
     if not isinstance(data, list):
         return JsonResponse({"error": "Could not load ExerciseLog objects: Unrecognized input data format." % e}, status=500)
 
     user = request.session["facility_user"]
-    responses = []
-    for exercise_id in data:
-        response = _get_exercise_log_dict(request, user, exercise_id)
-        if response:
-            responses.append(response)
-    return JsonResponse(responses)
 
+    return JsonResponse(
+        list(ExerciseLog.objects \
+            .filter(user=user, exercise_id__in=data) \
+            .values("exercise_id", "streak_progress", "complete", "points", "struggling", "attempts"))
+    )
 
-def _get_exercise_log_dict(request, user, exercise_id):
-    if not exercise_id:
-        return {}
-    try:
-        exerciselog = ExerciseLog.objects.get(user=user, exercise_id=exercise_id)
-    except ExerciseLog.DoesNotExist:
-        return {}
-    return {
-        "exercise_id": exercise_id,
-        "streak_progress": exerciselog.streak_progress,
-        "complete": exerciselog.complete,
-        "points": exerciselog.points,
-        "struggling": exerciselog.struggling,
-    }
-
-
-@require_admin
-@api_handle_error_with_json
-def start_video_download(request):
-    youtube_ids = OrderedSet(simplejson.loads(request.raw_post_data or "{}").get("youtube_ids", []))
-
-    video_files_to_create = [id for id in youtube_ids if not get_object_or_None(VideoFile, youtube_id=id)]
-    video_files_to_update = youtube_ids - OrderedSet(video_files_to_create)
-
-    VideoFile.objects.bulk_create([VideoFile(youtube_id=id, flagged_for_download=True) for id in video_files_to_create])
-
-    for chunk in break_into_chunks(youtube_ids):
-        video_files_needing_model_update = VideoFile.objects.filter(download_in_progress=False, youtube_id__in=chunk).exclude(percent_complete=100)
-        video_files_needing_model_update.update(percent_complete=0, cancel_download=False, flagged_for_download=True)
-
-    force_job("videodownload", "Download Videos")
-    return JsonResponse({})
-
-@require_admin
-@api_handle_error_with_json
-def delete_videos(request):
-    youtube_ids = simplejson.loads(request.raw_post_data or "{}").get("youtube_ids", [])
-    for id in youtube_ids:
-        # Delete the file on disk
-        delete_downloaded_files(id)
-
-        # Delete the file in the database
-        videofile = get_object_or_None(VideoFile, youtube_id=id)
-        if videofile:
-            videofile.cancel_download = True
-            videofile.flagged_for_download = False
-            videofile.flagged_for_subtitle_download = False
-            videofile.save()
-
-        # Refresh the cache
-        invalidate_all_pages_related_to_video(video_id=id)
-
-    return JsonResponse({})
-
-@require_admin
-@api_handle_error_with_json
-def check_video_download(request):
-    youtube_ids = simplejson.loads(request.raw_post_data or "{}").get("youtube_ids", [])
-    percentages = {}
-    percentages["downloading"] = job_status("videodownload")
-    for id in youtube_ids:
-        videofile = get_object_or_None(VideoFile, youtube_id=id) or VideoFile(youtube_id=id)
-        percentages[id] = videofile.percent_complete
-    return JsonResponse(percentages)
-
-@require_admin
-@api_handle_error_with_json
-def get_video_download_list(request):
-    videofiles = VideoFile.objects.filter(flagged_for_download=True).values("youtube_id")
-    video_ids = [video["youtube_id"] for video in videofiles]
-    return JsonResponse(video_ids)
-
-@require_admin
-@api_handle_error_with_json
-def start_subtitle_download(request):
-    update_set = simplejson.loads(request.raw_post_data or "{}").get("update_set", "existing")
-    language = simplejson.loads(request.raw_post_data or "{}").get("language", "")
-    language_list = topicdata.LANGUAGE_LIST
-    language_lookup = topicdata.LANGUAGE_LOOKUP
-
-    # Reset the language
-    current_language = Settings.get("subtitle_language")
-    if language in language_list:
-        Settings.set("subtitle_language", language)
-    else:
-        return JsonResponse({"error": "This language is not currently supported - please update the language list"}, status=500)
-
-    language_name = language_lookup.get(language)
-    # Get the json file with all srts
-    request_url = "http://%s/static/data/subtitles/languages/%s_available_srts.json" % (settings.CENTRAL_SERVER_HOST, language)
-    try:
-        r = requests.get(request_url)
-        r.raise_for_status() # will return none if 200, otherwise will raise HTTP error
-        available_srts = set((r.json)["srt_files"])
-    except ConnectionError:
-        return JsonResponse({"error": "The central server is currently offline."}, status=500)
-    except HTTPError:
-        return JsonResponse({"error": "No subtitles available on central server for %s (language code: %s); aborting." % (language_name, language)}, status=500)
-
-    if update_set == "existing":
-        videofiles = VideoFile.objects.filter(Q(percent_complete=100) | Q(flagged_for_download=True), subtitles_downloaded=False, youtube_id__in=available_srts)
-    else:
-        videofiles = VideoFile.objects.filter(Q(percent_complete=100) | Q(flagged_for_download=True), youtube_id__in=available_srts)
-
-    if not videofiles:
-        return JsonResponse({"info": "There aren't any subtitles available in %s (language code: %s) for your current videos." % (language_name, language)}, status=200)
-    else:   
-        for videofile in videofiles:
-            videofile.cancel_download = False
-            if videofile.subtitle_download_in_progress:
-                continue
-            videofile.flagged_for_subtitle_download = True
-            if update_set == "all":
-                videofile.subtitles_downloaded = False
-            videofile.save()
-        
-    force_job("subtitledownload", "Download Subtitles")
-    return JsonResponse({})
-
-@require_admin
-@api_handle_error_with_json
-def check_subtitle_download(request):
-    videofiles = VideoFile.objects.filter(flagged_for_subtitle_download=True)
-    return JsonResponse(videofiles.count())
-
-@require_admin
-@api_handle_error_with_json
-def get_subtitle_download_list(request):
-    videofiles = VideoFile.objects.filter(flagged_for_subtitle_download=True).values("youtube_id")
-    video_ids = [video["youtube_id"] for video in videofiles]
-    return JsonResponse(video_ids)
-
-@require_admin
-@api_handle_error_with_json
-def cancel_downloads(request):
-
-    # clear all download in progress flags, to make sure new downloads will go through
-    VideoFile.objects.all().update(download_in_progress=False)
-
-    # unflag all video downloads
-    VideoFile.objects.filter(flagged_for_download=True).update(cancel_download=True, flagged_for_download=False)
-
-    # unflag all subtitle downloads
-    VideoFile.objects.filter(flagged_for_subtitle_download=True).update(cancel_download=True, flagged_for_subtitle_download=False)
-
-    force_job("videodownload", stop=True)
-    force_job("subtitledownload", stop=True)
-
-    return JsonResponse({})
-
+# Functions below here focused on users
 
 @require_admin
 @api_handle_error_with_json
 def remove_from_group(request):
+    """
+    API endpoint for removing users from group
+    (from user management page)
+    """
     users = simplejson.loads(request.raw_post_data or "{}").get("users", "")
     users_to_remove = FacilityUser.objects.filter(username__in=users)
     users_to_remove.update(group=None)
     return JsonResponse({})
+
 
 @require_admin
 @api_handle_error_with_json
@@ -332,6 +208,7 @@ def move_to_group(request):
     users_to_move.update(group=group_update)
     return JsonResponse({})
 
+
 @require_admin
 @api_handle_error_with_json
 def delete_users(request):
@@ -340,59 +217,123 @@ def delete_users(request):
     users_to_delete.delete()
     return JsonResponse({})
 
-def annotate_topic_tree(node, level=0, statusdict=None):
-    if not statusdict:
-        statusdict = {}
-    if node["kind"] == "Topic":
-        if "Video" not in node["contains"]:
-            return None
-        children = []
-        unstarted = True
-        complete = True
-        for child_node in node["children"]:
-            child = annotate_topic_tree(child_node, level=level+1, statusdict=statusdict)
-            if child:
-                if child["addClass"] == "unstarted":
-                    complete = False
-                if child["addClass"] == "partial":
-                    complete = False
-                    unstarted = False
-                if child["addClass"] == "complete":
-                    unstarted = False
-                children.append(child)
-        return {
-            "title": node["title"],
-            "tooltip": re.sub(r'<[^>]*?>', '', node["description"] or ""),
-            "isFolder": True,
-            "key": node["slug"],
-            "children": children,
-            "addClass": complete and "complete" or unstarted and "unstarted" or "partial",
-            "expand": level < 1,
-        }
-    if node["kind"] == "Video":
-        #statusdict contains an item for each video registered in the database
-        # will be {} (empty dict) if there are no videos downloaded yet
-        percent = statusdict.get(node["youtube_id"], 0)
-        if not percent:
-            status = "unstarted"
-        elif percent == 100:
-            status = "complete"
-        else:
-            status = "partial"
-        return {
-            "title": node["title"],
-            "tooltip": re.sub(r'<[^>]*?>', '', node["description"] or ""),
-            "key": node["youtube_id"],
-            "addClass": status,
-        }
-    return None
 
-#@require_admin
-def get_annotated_topic_tree():
-    statusdict = dict(VideoFile.objects.values_list("youtube_id", "percent_complete"))
-    return annotate_topic_tree(topicdata.TOPICS, statusdict=statusdict)
-
-@require_admin
 @api_handle_error_with_json
-def get_topic_tree(request):
-    return JsonResponse(get_annotated_topic_tree())
+def launch_mplayer(request):
+    """
+    Launch an mplayer instance in a new thread, to play the video requested via the API.
+    """
+
+    if not settings.USE_MPLAYER:
+        raise PermissionDenied("You can only initiate mplayer if USE_MPLAYER is set to True.")
+
+    if "youtube_id" not in request.REQUEST:
+        return JsonResponse({"error": "no youtube_id specified"}, status=500)
+
+    youtube_id = request.REQUEST["youtube_id"]
+    facility_user = request.session.get("facility_user")
+
+    callback = partial(
+        _update_video_log_with_points,
+        youtube_id=youtube_id,
+        facility_user=facility_user,
+        language=request.language,
+    )
+
+    play_video_in_new_thread(youtube_id, content_root=settings.CONTENT_ROOT, callback=callback)
+
+    return JsonResponse({})
+
+
+def _update_video_log_with_points(seconds_watched, video_length, youtube_id, facility_user, language):
+    """Handle the callback from the mplayer thread, saving the VideoLog. """
+    # TODO (bcipolli) add language info here
+
+    if not facility_user:
+        return  # in other places, we signal to the user that info isn't being saved, but can't do it here.
+                #   adding this code for consistency / documentation purposes.
+
+    new_points = VideoLog.calc_points(seconds_watched, video_length)
+
+    videolog = VideoLog.update_video_log(
+        facility_user=facility_user,
+        youtube_id=youtube_id,
+        additional_seconds_watched=seconds_watched,
+        new_points=new_points,
+        language=language,
+    )
+
+    if "points" in request.session:
+        request.session["points"] = compute_total_points(user)
+
+
+def compute_total_points(user):
+    if user.is_teacher:
+        return None
+    else:
+        return VideoLog.get_points_for_user(user) + ExerciseLog.get_points_for_user(user)
+
+
+# On pages with no forms, we want to ensure that the CSRF cookie is set, so that AJAX POST
+# requests will be possible. Since `status` is always loaded, it's a good place for this.
+@ensure_csrf_cookie
+@allow_api_profiling
+@api_handle_error_with_json
+def status(request):
+    """In order to promote (efficient) caching on (low-powered)
+    distributed devices, we do not include ANY user data in our
+    templates.  Instead, an AJAX request is made to download user
+    data, and javascript used to update the page.
+
+    This view is the view providing the json blob of user information,
+    for each page view on the distributed server.
+
+    Besides basic user data, we also provide access to the
+    Django message system through this API, again to promote
+    caching by excluding any dynamic information from the server-generated
+    templates.
+    """
+    # Build a list of messages to pass to the user.
+    #   Iterating over the messages removes them from the
+    #   session storage, thus they only appear once.
+    message_dicts = []
+    for message in get_messages(request):
+        # Make sure to escape strings not marked as safe.
+        # Note: this duplicates a bit of Django template logic.
+        msg_txt = message.message
+        if not (isinstance(msg_txt, SafeString) or isinstance(msg_txt, SafeUnicode)):
+            msg_txt = cgi.escape(str(msg_txt))
+
+        message_dicts.append({
+            "tags": message.tags,
+            "text": msg_txt,
+        })
+
+    # Default data
+    data = {
+        "is_logged_in": request.is_logged_in,
+        "registered": request.session["registered"],
+        "is_admin": request.is_admin,
+        "is_django_user": request.is_django_user,
+        "points": 0,
+        "messages": message_dicts,
+    }
+    # Override properties using facility data
+    if "facility_user" in request.session:  # Facility user
+        user = request.session["facility_user"]
+        data["is_logged_in"] = True
+        data["username"] = user.get_name()
+        if "points" not in request.session:
+            request.session["points"] = compute_total_points(user)
+        data["points"] = request.session["points"]
+    # Override data using django data
+    if request.user.is_authenticated():  # Django user
+        data["is_logged_in"] = True
+        data["username"] = request.user.username
+
+    return JsonResponse(data)
+
+
+@backend_cache_page
+def flat_topic_tree(request):
+    return JsonResponse(get_flat_topic_tree())

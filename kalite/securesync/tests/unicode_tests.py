@@ -3,7 +3,7 @@ import sys
 from django.utils import unittest
 
 from securesync.models import *
-from utils.testing.unicode import UnicodeModelsTest
+from shared.testing.unicode import UnicodeModelsTest
 
 class SecuresyncUnicodeModelsTest(UnicodeModelsTest):
 
@@ -12,7 +12,7 @@ class SecuresyncUnicodeModelsTest(UnicodeModelsTest):
         # Make sure we're testing all classes
         self.check_unicode_class_coverage(
             models_module="securesync.models",
-            known_classes = [Device, DeviceMetadata, DeviceZone, Facility, FacilityGroup, FacilityUser, RegisteredDevicePublicKey, SyncSession, SyncedLog, SyncedModel, Zone],
+            known_classes = [DeferredSignSyncedModel, Device, DeviceMetadata, DeviceZone, Facility, FacilityGroup, FacilityUser, RegisteredDevicePublicKey, SyncSession, SyncedLog, SyncedModel, Zone],
         )
 
 

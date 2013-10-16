@@ -33,13 +33,17 @@ function updatePercentCompleted(correct) {
     // max out at the percentage completed at 100%
     exerciseData.percentCompleted = Math.min(exerciseData.percentCompleted, 100);
 
+    // Increment the # of attempts
+    exerciseData.attempts++;
+
     updateStreakBar();
 
     var data = {
         exercise_id: exerciseData.exerciseModel.name,
         streak_progress: exerciseData.percentCompleted,
         points: exerciseData.points,
-        correct: correct
+        correct: correct,
+        attempts: exerciseData.attempts
     };
 
     doRequest("/api/save_exercise_log", data)
@@ -55,20 +59,22 @@ function updatePercentCompleted(correct) {
 };
 
 $(function() {
-    $(Exercises).trigger("problemTemplateRendered");
-    $(Exercises).trigger("readyForNextProblem", {userExercise: exerciseData});
-    $(Khan).bind("checkAnswer", function(ev, data) {
-        updatePercentCompleted(data.pass);
+
+    $(Khan).bind("loaded", function() {
+        $(Exercises).trigger("problemTemplateRendered");
+        $(Exercises).trigger("readyForNextProblem", {userExercise: exerciseData});
     });
-    $(Khan).bind("hintUsed", function(ev, data) {
-        exerciseData.hintUsed = true;
-        if (exerciseData.percentCompleted < 100) {
-            exerciseData.percentCompleted = 0;
-            exerciseData.points = 0;
+    $(Exercises).bind("checkAnswer", function(ev, data) {
+        updatePercentCompleted(data.correct);
+    });
+    $(Exercises).bind("hintUsed", function(ev, data) {
+        if (exerciseData.hintUsed) { // only register the first hint used on a question
+            return;
         }
-        updateStreakBar();
+        exerciseData.hintUsed = true;
+        updatePercentCompleted(false);
     });
-    basepoints = Math.ceil(7*Math.log(exerciseData.exerciseModel.secondsPerFastProblem));
+    basepoints = exerciseData.basepoints;
     $("#next-question-button").click(function() {
         _.defer(function() {
             updateQuestionPoints(false);
@@ -84,6 +90,7 @@ $(function() {
             }
             exerciseData.percentCompleted = data[0].streak_progress;
             exerciseData.points = exerciseData.starting_points = data[0].points;
+            exerciseData.attempts = data[0].attempts;
 
             updateStreakBar();
 

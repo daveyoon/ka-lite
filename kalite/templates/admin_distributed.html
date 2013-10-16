@@ -35,6 +35,9 @@ ul {
 td.title { 
     padding-top: 25px;
 }
+.green_button {
+    margin-right: 20px;
+}
 </style>
 {% endblock headcss %}
 
@@ -43,7 +46,14 @@ td.title {
 {% block content %}
 <div id="content">
   {% trans "This page can help you administer your installation of KA Lite." %}
-  
+    {% if in_a_zone %}
+    <div style="float:right" class="server-online-only">
+        <div class="registered-only">
+            <a class="green_button" href="javascript:force_sync()">{% trans "Sync Now!" %}</a>
+        </div>
+    </div>
+    {% endif %}
+
     <table>
         <tr>
             <td class="title" colspan="2">
@@ -52,7 +62,7 @@ td.title {
         </tr>
         {% if in_a_zone %}
         <tr>
-            <td class="link"><a href="{% url zone_redirect %}">{% trans "Zone management" %}</a></td>
+            <td class="link"><a href="{% url zone_redirect %}">{% trans "Network management" %}</a></td>
             <td class="desc">{%trans "Access to summary data over all facilities and devices" %}</td>
         </tr>
         {% endif %}

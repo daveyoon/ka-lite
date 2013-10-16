@@ -1,12 +1,12 @@
 {
   "topics": {
-    "circles": {
-      "icon_url": "/images/power-mode/badges/circles-40x40.png", 
-      "translated_standalone_title": "Circles", 
-      "y": 43.0, 
-      "x": -22.0, 
-      "standalone_title": "Circles", 
-      "id": "circles"
+    "fractions": {
+      "icon_url": "/images/power-mode/badges/fractions-40x40.png", 
+      "translated_standalone_title": "Fractions", 
+      "y": 22.0, 
+      "x": -10.0, 
+      "standalone_title": "Fractions", 
+      "id": "fractions"
     }, 
     "probability": {
       "icon_url": "/images/power-mode/badges/probability-40x40.png", 
@@ -39,14 +39,6 @@
       "x": -5.0, 
       "standalone_title": "Multiplication and division", 
       "id": "multiplication-division"
-    }, 
-    "telling-time": {
-      "icon_url": "/images/power-mode/badges/telling-time-40x40.png", 
-      "translated_standalone_title": "Telling time", 
-      "y": 3.5, 
-      "x": 11.0, 
-      "standalone_title": "Telling time", 
-      "id": "telling-time"
     }, 
     "systems-of-eq-and-ineq": {
       "icon_url": "/images/power-mode/badges/systems-of-eq-and-ineq-40x40.png", 
@@ -98,10 +90,10 @@
     }, 
     "linear-equations-and-inequalitie": {
       "icon_url": "/images/power-mode/badges/linear-equations-and-inequalitie-40x40.png", 
-      "translated_standalone_title": "Analytic geometry -visualizing linear relationships", 
+      "translated_standalone_title": "Graphing linear functions", 
       "y": 40.0, 
       "x": 10.0, 
-      "standalone_title": "Analytic geometry -visualizing linear relationships", 
+      "standalone_title": "Graphing linear functions", 
       "id": "linear-equations-and-inequalitie"
     }, 
     "transformations": {
@@ -122,10 +114,10 @@
     }, 
     "rational-expressions": {
       "icon_url": "/images/power-mode/badges/rational-expressions-40x40.png", 
-      "translated_standalone_title": "Ratios and rational expressions", 
+      "translated_standalone_title": "Rational expressions", 
       "y": 54.0, 
       "x": -7.0, 
-      "standalone_title": "Ratios and rational expressions", 
+      "standalone_title": "Rational expressions", 
       "id": "rational-expressions"
     }, 
     "linear_inequalities": {
@@ -144,13 +136,21 @@
       "standalone_title": "Applying mathematical reasoning", 
       "id": "applying-math-reasoning-topic"
     }, 
-    "fractions": {
-      "icon_url": "/images/power-mode/badges/fractions-40x40.png", 
-      "translated_standalone_title": "Fractions", 
-      "y": 22.0, 
-      "x": -10.0, 
-      "standalone_title": "Fractions", 
-      "id": "fractions"
+    "circles": {
+      "icon_url": "/images/power-mode/badges/circles-40x40.png", 
+      "translated_standalone_title": "Circles", 
+      "y": 43.0, 
+      "x": -22.0, 
+      "standalone_title": "Circles", 
+      "id": "circles"
+    }, 
+    "order-of-operations": {
+      "icon_url": "/images/power-mode/badges/order-of-operations-40x40.png", 
+      "translated_standalone_title": "Arithmetic properties", 
+      "y": 14.0, 
+      "x": -4.0, 
+      "standalone_title": "Arithmetic properties", 
+      "id": "order-of-operations"
     }, 
     "exponents-radicals": {
       "icon_url": "/images/power-mode/badges/exponents-radicals-40x40.png", 
@@ -184,14 +184,6 @@
       "standalone_title": "Matrices", 
       "id": "algebra-matrices"
     }, 
-    "polynomials": {
-      "icon_url": "/images/power-mode/badges/polynomials-40x40.png", 
-      "translated_standalone_title": "Polynomials", 
-      "y": 46.0, 
-      "x": -7.0, 
-      "standalone_title": "Polynomials", 
-      "id": "polynomials"
-    }, 
     "solving-linear-equations-and-inequalities": {
       "icon_url": "/images/power-mode/badges/solving-linear-equations-and-inequalities-40x40.png", 
       "translated_standalone_title": "Linear equations", 
@@ -202,10 +194,10 @@
     }, 
     "quadratics": {
       "icon_url": "/images/power-mode/badges/quadratics-40x40.png", 
-      "translated_standalone_title": "Quadratics", 
+      "translated_standalone_title": "Quadratics functions and equations", 
       "y": 49.0, 
       "x": -1.0, 
-      "standalone_title": "Quadratics", 
+      "standalone_title": "Quadratics functions and equations", 
       "id": "quadratics"
     }, 
     "statistics-inferential": {
@@ -215,14 +207,6 @@
       "x": -25.0, 
       "standalone_title": "Inferential statistics", 
       "id": "statistics-inferential"
-    }, 
-    "complex-numbers": {
-      "icon_url": "/images/power-mode/badges/complex-numbers-40x40.png", 
-      "translated_standalone_title": "Complex numbers", 
-      "y": 49.0, 
-      "x": -12.0, 
-      "standalone_title": "Complex numbers", 
-      "id": "complex-numbers"
     }, 
     "rates-and-ratios": {
       "icon_url": "/images/power-mode/badges/rates-and-ratios-40x40.png", 
@@ -288,13 +272,13 @@
       "standalone_title": "Trigonometry and precalculus", 
       "id": "trigonometry"
     }, 
-    "order-of-operations": {
-      "icon_url": "/images/power-mode/badges/order-of-operations-40x40.png", 
-      "translated_standalone_title": "Arithmetic properties", 
-      "y": 14.0, 
-      "x": -4.0, 
-      "standalone_title": "Arithmetic properties", 
-      "id": "order-of-operations"
+    "complex-numbers": {
+      "icon_url": "/images/power-mode/badges/complex-numbers-40x40.png", 
+      "translated_standalone_title": "Complex numbers", 
+      "y": 49.0, 
+      "x": -12.0, 
+      "standalone_title": "Complex numbers", 
+      "id": "complex-numbers"
     }
   }, 
   "polylines": [
@@ -649,72 +633,12 @@
     {
       "path": [
         {
-          "y": 39, 
-          "x": -1
-        }, 
-        {
-          "y": 46, 
-          "x": -7
-        }
-      ]
-    }, 
-    {
-      "path": [
-        {
-          "y": 40, 
-          "x": 10
-        }, 
-        {
-          "y": 46, 
-          "x": -7
-        }
-      ]
-    }, 
-    {
-      "path": [
-        {
           "y": 40, 
           "x": 10
         }, 
         {
           "y": 49, 
           "x": 10
-        }
-      ]
-    }, 
-    {
-      "path": [
-        {
-          "y": 46, 
-          "x": -7
-        }, 
-        {
-          "y": 49, 
-          "x": -12
-        }
-      ]
-    }, 
-    {
-      "path": [
-        {
-          "y": 46, 
-          "x": -7
-        }, 
-        {
-          "y": 49, 
-          "x": -1
-        }
-      ]
-    }, 
-    {
-      "path": [
-        {
-          "y": 46, 
-          "x": -7
-        }, 
-        {
-          "y": 49, 
-          "x": 4
         }
       ]
     }, 

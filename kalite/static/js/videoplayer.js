@@ -1,4 +1,4 @@
-window.VideoPlayerState = {
+    window.VideoPlayerState = {
     UNSTARTED: -1,
     ENDED: 0,
     PLAYING: 1,
@@ -14,6 +14,7 @@ window.VideoPlayerModel = Backbone.Model.extend({
     defaults: {
         percent_last_saved: 0.0,
         seconds_watched_since_save: 0.0,
+        total_seconds_watched: 0.0,
         points: 0,
         possible_points: 750,
         starting_points: 0,
@@ -75,6 +76,7 @@ window.VideoPlayerModel = Backbone.Model.extend({
         data = {
             youtube_id: this.get("youtube_id"),
             seconds_watched: this.get("seconds_watched_since_save"),
+            total_seconds_watched: this.get("total_seconds_watched"),
             points: this.get("points")
         }
 
@@ -132,7 +134,10 @@ window.VideoPlayerModel = Backbone.Model.extend({
 
         if (secondsWatchedSinceLastPoll > 0) {
             seconds_watched_since_save += secondsWatchedSinceLastPoll;
-            this.set("seconds_watched_since_save", seconds_watched_since_save);
+            this.set({
+                seconds_watched_since_save: seconds_watched_since_save,
+                total_seconds_watched: this.get("total_seconds_watched") + secondsWatchedSinceLastPoll
+            });
         }
 
         return seconds_watched_since_save;
@@ -256,19 +261,20 @@ window.VideoView = Backbone.View.extend({
 
         this.model = new VideoPlayerModel(this.options);
 
-        this.player = this.model.player = _V_(this.$("video").attr("id"));
+        this._pointView = new PointView({model: this.model});
 
-        this._beginIntervalUpdate();
+        var player_id = this.$("video").attr("id");
 
-        this._initializeEventListeners();
-
+        if (player_id) { // if it's using mplayer, there won't be a player here
+            this.player = this.model.player = _V_(player_id);
+            this._beginIntervalUpdate();
+            this._initializeEventListeners();
+        }
     },
 
     _initializeEventListeners: function() {
 
         var self = this;
-
-        this.model.whenPointsIncrease(this._update_points);
 
         this.player
             .on("loadstart", function() {
@@ -316,11 +322,6 @@ window.VideoView = Backbone.View.extend({
 
     },
 
-    _update_points: function(points) {
-        $(".points").text(points);
-        $(".points-container").toggle(points > 0);
-    },
-
     setContainerSize: function(container_width, container_height) {
 
         var container_ratio = container_width / container_height;
@@ -336,7 +337,11 @@ window.VideoView = Backbone.View.extend({
             height = container_width / ratio;
         }
 
-        this.player.width(width).height(height);
+        if (this.player) {
+            this.player.width(width).height(height);
+        }
+
+        this.$(".video-thumb").width(width).height(height);
 
     },
 
@@ -380,6 +385,32 @@ window.VideoView = Backbone.View.extend({
 
 });
 
+
+window.PointView = Backbone.View.extend({
+    /*
+    Passively display the point count to the user (and listen to changes on the model to know when to update).
+    */
+
+    el: $(".points-container"),
+
+    initialize: function() {
+
+        _.bindAll(this);
+
+        this.model = this.options.model || new VideoPlayerModel(this.options);
+
+        this.model.whenPointsIncrease(this._updatePoints);
+
+    },
+
+    _updatePoints: function(points) {
+        this.$(".points").text(points);
+        this.$el.toggle(points > 0);
+    }
+
+});
+
+
 function initialize_video(video_youtube_id) {
 
     var create_video_view = _.once(function(width, height) {
@@ -420,5 +451,19 @@ function initialize_video(video_youtube_id) {
         create_video_view(width, height);
 
     });
+
+    $("#launch_mplayer").click(_.throttle(function() {
+        // launch mplayer in the background to play the video
+        doRequest("/api/launch_mplayer?youtube_id=" + video_youtube_id)
+            .fail(function(resp) {
+                communicate_api_failure(resp, "id_mplayer");
+            });
+        // after mplayer closes and focus returns to the website, refresh the points from the server
+        $(window).focus(function() {
+            $(window).unbind("focus");
+            videoView.model.fetch();
+        });
+        return false;
+    }, 5000));
 
 }

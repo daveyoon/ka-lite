@@ -8,7 +8,7 @@ from django.http import HttpResponseRedirect, HttpResponseServerError
 from .devices.views import *
 from .users.views import *
 from securesync.models import SyncSession
-from utils.decorators import distributed_server_only
+from shared.decorators import distributed_server_only
 
 
 @distributed_server_only
@@ -24,7 +24,7 @@ def crypto_login(request):
             session = SyncSession.objects.get(client_nonce=client_nonce)
         except SyncSession.DoesNotExist:
             return HttpResponseServerError("Session not found.")
-        if session.server_device.get_metadata().is_trusted:
+        if session.server_device.is_trusted():
             user = get_object_or_None(User, username="centraladmin")
             if not user:
                 user = User(username="centraladmin", is_superuser=True, is_staff=True, is_active=True)

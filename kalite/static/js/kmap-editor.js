@@ -55,8 +55,8 @@ var KMapEditor = {
     setZoom: function(zoom) {
         this.zoomLevel = Math.min(Math.max(zoom, this.ZOOM_TOPICS), this.ZOOM_EXERCISES);
         if (this.zoomLevel === this.ZOOM_EXERCISES) {
-            this.X_SPACING = 74;
-            this.Y_SPACING = 94;
+            this.X_SPACING = 65;
+            this.Y_SPACING = 105;
             this.ICON_SIZE = 26;
             this.LABEL_WIDTH = 60;
         } else if (this.zoomLevel === this.ZOOM_HYBRID) {
@@ -83,10 +83,10 @@ var KMapEditor = {
         this.raphael = Raphael($("#map")[0]);
 
         if (this.zoomLevel === this.ZOOM_EXERCISES) {
-            this.minX = Math.min.apply(Math, _.pluck(this.exercises, "v_position"));
-            this.minY = Math.min.apply(Math, _.pluck(this.exercises, "h_position"));
-            this.maxX = Math.max.apply(Math, _.pluck(this.exercises, "v_position"));
-            this.maxY = Math.max.apply(Math, _.pluck(this.exercises, "h_position"));
+            this.minX = Math.min.apply(Math, _.pluck(this.exercises, "h_position"));
+            this.minY = Math.min.apply(Math, _.pluck(this.exercises, "v_position"));
+            this.maxX = Math.max.apply(Math, _.pluck(this.exercises, "h_position"));
+            this.maxY = Math.max.apply(Math, _.pluck(this.exercises, "v_position"));
         } else if (this.zoomLevel === this.ZOOM_TOPICS) {
             var topicList = _.values(this.maplayout.topics);
             this.minY = Math.min.apply(Math, _.pluck(topicList, "y"));
@@ -162,8 +162,8 @@ var KMapEditor = {
                 var newDiv = $("<div>")
                     .appendTo($("#map"))
                     .css({
-                        "left": (ex.v_position - KMapEditor.minX) * KMapEditor.X_SPACING,
-                        "top": (ex.h_position - KMapEditor.minY) * KMapEditor.Y_SPACING - KMapEditor.ICON_SIZE / 2,
+                        "left": (ex.h_position - KMapEditor.minX) * KMapEditor.X_SPACING,
+                        "top": (ex.v_position - KMapEditor.minY) * KMapEditor.Y_SPACING - KMapEditor.ICON_SIZE / 2,
                         "width": KMapEditor.LABEL_WIDTH
                     })
                     .addClass("exercise");
@@ -214,10 +214,10 @@ var KMapEditor = {
 
         this.raphael.path(
             Raphael.format("M{0},{1}L{2},{3}",
-                (src_ex.v_position - this.minX) * this.X_SPACING + (this.LABEL_WIDTH / 2),
-                (src_ex.h_position - this.minY) * this.Y_SPACING,
-                (dst_ex.v_position - this.minX) * this.X_SPACING + (this.LABEL_WIDTH / 2),
-                (dst_ex.h_position - this.minY) * this.Y_SPACING
+                (src_ex.h_position - this.minX) * this.X_SPACING + (this.LABEL_WIDTH / 2),
+                (src_ex.v_position - this.minY) * this.Y_SPACING,
+                (dst_ex.h_position - this.minX) * this.X_SPACING + (this.LABEL_WIDTH / 2),
+                (dst_ex.v_position - this.minY) * this.Y_SPACING
         )).attr({
             "stroke-width": 1,
             "stroke": "#777"
@@ -242,6 +242,7 @@ $(document).ready(function() {
         // Second level of the topic tree
         $.getJSON("/static/data/topicdata/" + vars["topic"] + ".json")
             .success(function(exerciseLayout) {
+
                 var exercise_ids = $.map(exerciseLayout, function(exercise) { return exercise.name });
                 doRequest("/api/get_exercise_logs", exercise_ids)
                     .success(function(data) {
