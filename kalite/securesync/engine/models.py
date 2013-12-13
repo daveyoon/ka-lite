@@ -88,16 +88,26 @@ class SyncedModelManager(models.Manager):
         app_label = "securesync"
 
     def by_zone(self, zone):
-        # get model instances that were signed by devices in the zone,
-        # or signed by a trusted authority that said they were for the zone
-        return self.filter(Q(signed_by__devicezone__zone=zone, signed_by__devicezone__revoked=False) |
-            Q(signed_by__devicemetadata__is_trusted=True, zone_fallback=zone))
+        """Get model instances that were signed by devices in the zone,
+        or signed by a trusted authority that said they were for the zone,
+        or not signed at all and we're looking for models in our own zone.
+        """
+
+        condition = \
+            Q(signed_by__devicezone__zone=zone, signed_by__devicezone__revoked=False) | \
+            Q(signed_by__devicemetadata__is_trusted=True, zone_fallback=zone)
+
+        # Due to deferred signing, we need to consider completely unsigned models to be in our own zone.
+        if zone == _get_own_device().get_zone():
+            condition = condition | Q(signed_by=None)
+
+        return self.filter(condition)
 
 
 class SyncedModel(ExtendedModel):
     """
     The main class that makes this engine go.
-    
+
     A model that is cross-computer syncable.  All models sync'd across computers
     should inherit from this base class.
 
@@ -105,7 +115,7 @@ class SyncedModel(ExtendedModel):
     signed_version is part of a design where schema changes forced models into ImportPurgatory,
     where they would stay until a software upgrade.
 
-    Due to the deployment (and worldwide use) of code with a bug in the implementation of that design, 
+    Due to the deployment (and worldwide use) of code with a bug in the implementation of that design,
     a second design was implemented and deployed.  There, unknown models and model fields (judged by
     comparing the model/field's "minversion" property with the remote server's version) are
     simply not shared over the wire.  This system only works for distributed-central interactions,
@@ -173,7 +183,7 @@ class SyncedModel(ExtendedModel):
     def verify(self):
         if not self.validate():
             return False
-            
+
         # by this point, we know that we're ok with accepting this model from the device that it says signed it
         # now, we just need to check whether or not it is actually signed by that model's private key
         try:
@@ -284,7 +294,7 @@ class SyncedModel(ExtendedModel):
 
     def get_uuid(self):
         """
-        By default, all objects get an ID from the 
+        By default, all objects get an ID from the
         device and the counter position at which it was created.
         """
         assert self.counter is not None, "counter required for get_uuid"
@@ -339,13 +349,13 @@ class DeferredCountSyncedModel(DeferredSignSyncedModel):
     """
     Defer incrementing counters until syncing.
     """
-    def save(self, increment_counters=None, *args, **kwargs):
+    def save(self, increment_counters=settings.CENTRAL_SERVER, *args, **kwargs):
         """
         Note that increment_counters will set counters to None,
         and that if the object must be created, counter will be incremented
         and temporarily set, to create the object ID.
         """
-        super(DeferredCountSyncedModel, self).save(*args, increment_counters=settings.CENTRAL_SERVER, **kwargs)
+        super(DeferredCountSyncedModel, self).save(*args, increment_counters=increment_counters, **kwargs)
 
     def set_id(self):
         if self.id:
@@ -353,6 +363,8 @@ class DeferredCountSyncedModel(DeferredSignSyncedModel):
         elif self.counter:
             self.id = self.get_uuid()
         else:
+            # UUID depends on counter position, so we *have* to get a counter
+            #   position to set an id
             own_device = _get_own_device()
             self.counter = own_device.increment_counter_position()
             self.id = self.get_uuid()

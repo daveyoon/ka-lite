@@ -14,8 +14,8 @@ from securesync.devices.models import *
 class SyncClient(BaseClient):
     """ This is for the distributed server, for establishing a client session with
     the central server.  Over that session, syncing can occur in multiple requests.
-    
-    Note that in the future, this object may be used to sync 
+
+    Note that in the future, this object may be used to sync
     between two distributed servers (i.e. peer-to-peer sync)!"""
     session = None
 
@@ -38,7 +38,7 @@ class SyncClient(BaseClient):
         self.session = SyncSession()
 
         # Request one: validate me as a sessionable partner
-        (self.session.client_nonce, 
+        (self.session.client_nonce,
          self.session.client_device,
          data) = self.validate_me_on_server()
 
@@ -61,6 +61,9 @@ class SyncClient(BaseClient):
             raise Exception("The server is not trusted, don't make a session with THAT.")
         self.session.verified = True
         self.session.timestamp = session.timestamp
+
+        self.session.ip = self.parsed_url.netloc
+
         self.session.save()
 
         # Request two: create your own session, and
@@ -93,12 +96,12 @@ class SyncClient(BaseClient):
         try:
             data = json.loads(raw_data)
         except ValueError as e:
-            z = re.search(r'exception_value">([^<]+)<', str(raw_data), re.MULTILINE)
+            z = re.search(r'exception_value">([^<]+)<', unicode(raw_data), re.MULTILINE)
             if z:
                 raise Exception("Could not load JSON\n; server error=%s" % z.group(1))
             else:
                 raise Exception("Could not load JSON\n; raw content=%s" % raw_data)
-            
+
         # Happens if the server reports an error
         if data.get("error"):
             # This happens when a device points to a new central server,
@@ -177,9 +180,10 @@ class SyncClient(BaseClient):
             if not d.get_counter_position():  # this would be nonzero if the device sync'd models
                 d.set_counter_position(counters_to_download[device_id])
 
-
         self.session.models_downloaded += download_results["saved_model_count"]
         self.session.errors += download_results.has_key("error")
+
+        self.session.save()
 
         # TODO(jamalex): upload local devices as well? only needed once we have P2P syncing
 
@@ -190,7 +194,7 @@ class SyncClient(BaseClient):
         """
         This method first syncs device counters and device objects, so that the two computers
         can determine who has what and, in comparison, what it needs to request.
-        
+
         Then, it uses those device records to partially download and partially upload.
         Not all at once--that would be less robust!
 
@@ -235,5 +239,7 @@ class SyncClient(BaseClient):
         except Exception as e:
             upload_results["error"] = e
             self.session.errors += 1
+
+        self.session.save()
 
         return {"download_results": download_results, "upload_results": upload_results}

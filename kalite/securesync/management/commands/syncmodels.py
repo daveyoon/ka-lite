@@ -9,12 +9,13 @@ from django.core.management.base import BaseCommand, CommandError
 
 import settings
 from securesync.engine.api_client import SyncClient
+from utils import set_process_priority
 
 
 class Command(BaseCommand):
     args = "<target server host (protocol://domain:port)> <num_retries>"
     help = "Synchronize the local SyncedModels with a remote server"
-
+    
     def stdout_writeln(self, str):  self.stdout.write("%s\n"%str)
     def stderr_writeln(self, str):  self.stderr.write("%s\n"%str)
 
@@ -23,6 +24,8 @@ class Command(BaseCommand):
         # Parse input parameters
         kwargs = {"host": args[0]} if len(args) >= 1 else {}
         max_retries = args[1] if len(args) >= 2 else 5
+        
+        set_process_priority.lowest(logging=settings.LOG)  # don't block users from web access due to syncing
 
         # Retry purgatory
         self.stdout_writeln(("Checking purgatory for unsaved models")+"...")
@@ -77,11 +80,11 @@ class Command(BaseCommand):
             # Report any errors
             if error_count > 0:
                 if upload_results.has_key("error"):
-                    self.stderr_writeln("%s: %s"%(("Upload error"),upload_results["error"]))
+                    self.stderr_writeln("%s: %s" % (("Upload error"),upload_results["error"]))
                 if download_results.has_key("error"):
-                    self.stderr_writeln("%s: %s"%(("Download error"),download_results["error"]))
+                    self.stderr_writeln("%s: %s" % (("Download error"),download_results["error"]))
                 if upload_results.has_key("exceptions"):
-                    self.stderr_writeln("%s: %s"%(("Upload exceptions"),upload_results["exceptions"][:200]))
+                    self.stderr_writeln("%s: %s" % (("Upload exceptions"),upload_results["exceptions"][:200]))
 
             # stop when nothing is being transferred anymore
             if success_count == 0 and (fail_count == 0 or failure_tries >= max_retries):
@@ -101,7 +104,7 @@ class Command(BaseCommand):
         if client.session.errors:
             self.stderr_writeln("Completed with %d errors."%client.session.errors)
         if failure_tries >= max_retries:
-            self.stderr_writeln("%s (%d)."%("Failed to upload all models (stopped after failed attempts)",failure_tries))
+            self.stderr_writeln("%s (%d)." % ("Failed to upload all models (stopped after failed attempts)",failure_tries))
 
         self.stdout_writeln(("Checking purgatory once more, to try saving any unsaved models")+"...")
         call_command("retrypurgatory")

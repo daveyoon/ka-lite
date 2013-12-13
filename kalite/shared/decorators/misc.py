@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.core.urlresolvers import reverse
 from django.core.exceptions import PermissionDenied
 from django.contrib.auth.decorators import login_required
+from django.db.models import Q
 from django.http import HttpResponse, Http404, HttpResponseRedirect
 from django.shortcuts import render_to_response, get_object_or_404, redirect, get_list_or_404
 from django.utils.safestring import mark_safe
@@ -13,6 +14,7 @@ from django.utils.translation import ugettext as _
 
 import settings
 from config.models import Settings
+from securesync.middleware import refresh_session_facility_info
 from securesync.models import Device, DeviceZone, Zone, Facility, FacilityUser
 from utils.internet import JsonResponse, JsonpResponse
 
@@ -23,7 +25,7 @@ def central_server_only(handler):
     """
     def wrapper_fn(*args, **kwargs):
         if not settings.CENTRAL_SERVER:
-            raise Http404("This path is only available on the central server.")
+            raise Http404(_("This path is only available on the central server."))
         return handler(*args, **kwargs)
     return wrapper_fn
 
@@ -70,9 +72,16 @@ def facility_from_request(handler=None, request=None, *args, **kwargs):
             facility = Facility.objects.all()[0]
 
         elif request.session["facility_count"] > 0:
-            # There are multiple facilities--try to grab the default
-            facility = get_object_or_None(Facility, pk=Settings.get("default_facility"))
+            if Settings.get("default_facility"):
+                # There are multiple facilities--try to grab the default
+                facility = get_object_or_None(Facility, pk=Settings.get("default_facility"))
 
+            elif Facility.objects.filter(Q(signed_by__isnull=True) | Q(signed_by=Device.get_own_device())).count() == 1:
+                # Default to a locally created facility (if there are multiple, and none are specified)
+                facility = Facility.objects.filter(Q(signed_by__isnull=True) | Q(signed_by=Device.get_own_device()))[0]
+
+            else:
+                facility = None
         else:
             # There's nothing; don't bother even hitting the DB
             facility = None
@@ -101,11 +110,13 @@ def facility_required(handler):
                 messages.warning(request,
                     _("You must first have the administrator of this server log in below to add a facility."))
             return HttpResponseRedirect(reverse("add_facility"))
+
         else:
             @distributed_server_only
             @render_to("securesync/facility_selection.html")
             def facility_selection(request):
-                facilities = Facility.objects.all()
+                facilities = list(Facility.objects.all())
+                refresh_session_facility_info(request, len(facilities))
                 context = {"facilities": facilities}
                 return context
             return facility_selection(request)

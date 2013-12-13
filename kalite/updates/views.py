@@ -2,7 +2,7 @@ import copy
 import datetime
 import json
 import os
-import re 
+import re
 import sys
 from annoying.decorators import render_to
 from annoying.functions import get_object_or_None
@@ -23,14 +23,15 @@ from django.views.decorators.cache import cache_page
 
 import settings
 import version
+from .models import VideoFile
 from config.models import Settings
-from control_panel.views import user_management_context
-from main import topicdata
-from main.models import VideoLog, ExerciseLog, VideoFile
+from control_panel.views import local_device_context, user_management_context
+from i18n.middleware import set_language_choices
 from securesync.models import Facility, FacilityUser, FacilityGroup, Device
 from securesync.views import require_admin, facility_required
 from shared import topic_tools
 from shared.decorators import require_admin
+from shared.i18n import lcode_to_ietf, get_installed_language_packs
 from shared.jobs import force_job
 from utils.internet import am_i_online, JsonResponse
 
@@ -48,44 +49,40 @@ def update_context(request):
 
 
 @require_admin
-@render_to("updates/update.html")
-def update(request):
-    context = update_context(request)
-    context.update({
-        "registered": Settings.get("registered"),
-        "video_count": VideoFile.objects.filter(percent_complete=100).count(),
-    })
-    return context
-
-@require_admin
-@render_to("updates/update.html")
+@render_to("updates/landing_page.html")
 def update(request):
     context = update_context(request)
     return context
 
 @require_admin
 @render_to("updates/update_videos.html")
-def update_videos(request):
+def update_videos(request, max_to_show=5):
     call_command("videoscan")  # Could potentially be very slow, blocking request.
-    force_job("videodownload", "Download Videos")
+    force_job("videodownload", _("Download Videos"))  # async request
+
+    installed_languages = set_language_choices(request, force=True)
+    languages_to_show = [l['name'] for l in installed_languages.values()[:max_to_show]]
+    other_languages_count = max(0, len(installed_languages) - max_to_show)
 
     context = update_context(request)
     context.update({
         "video_count": VideoFile.objects.filter(percent_complete=100).count(),
+        "languages": languages_to_show,
+        "other_languages_count": other_languages_count,
     })
     return context
 
 
 @require_admin
-@render_to("updates/update_subtitles.html")
-def update_subtitles(request):
-    force_job("subtitledownload", "Download Subtitles")
+@render_to("updates/update_languages.html")
+def update_languages(request):
+    # also refresh language choices here if ever updates js framework fails, but the language was downloaded anyway
+    set_language_choices(request, force=True)
 
-    default_language = Settings.get("subtitle_language") or "en"
-
+    # here we want to reference the language meta data we've loaded into memory
     context = update_context(request)
     context.update({
-        "default_language": default_language,
+        "installed_languages": request.session['language_choices'].values(),
     })
     return context
 
@@ -93,15 +90,6 @@ def update_subtitles(request):
 @require_admin
 @render_to("updates/update_software.html")
 def update_software(request):
-    database_path = settings.DATABASES["default"]["NAME"]
-    current_version = request.GET.get("version", version.VERSION)  # allows easy development by passing a different version
-
     context = update_context(request)
-    context.update({
-        "software_version": current_version,
-        "software_release_date": version.VERSION_INFO[current_version]["release_date"],
-        "install_dir": os.path.realpath(os.path.join(settings.PROJECT_PATH, "..")),
-        "database_last_updated": datetime.datetime.fromtimestamp(os.path.getctime(database_path)),
-        "database_size": os.stat(settings.DATABASES["default"]["NAME"]).st_size / float(1024**2),
-    })
+    context.update(local_device_context(request))
     return context

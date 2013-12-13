@@ -1,4 +1,4 @@
-import urllib
+import urlparse
 from annoying.decorators import render_to
 from annoying.functions import get_object_or_None
 
@@ -16,6 +16,7 @@ from django.utils.translation import ugettext as _
 
 import settings
 from .forms import FacilityUserForm, LoginForm, FacilityForm, FacilityGroupForm
+from .middleware import refresh_session_facility_info
 from .models import Facility, FacilityGroup
 from config.models import Settings
 from main.models import UserLog
@@ -26,7 +27,6 @@ from settings import LOG as logging
 from shared.decorators import require_admin, central_server_only, distributed_server_only, facility_required, facility_from_request
 from shared.jobs import force_job
 from utils.internet import set_query_params
-
 
 @require_admin
 @distributed_server_only
@@ -71,8 +71,8 @@ def add_facility_student(request):
 
 
 @distributed_server_only
-@render_to("securesync/add_facility_user.html")
 @facility_required
+@render_to("securesync/facility_user.html")
 def edit_facility_user(request, facility, is_teacher=None, id=None):
     """Different codepaths for the following:
     * Django admin/teacher creates user, teacher
@@ -81,33 +81,47 @@ def edit_facility_user(request, facility, is_teacher=None, id=None):
     Each has its own message and redirect.
     """
 
-    user = get_object_or_404(FacilityUser, id=id) if id != "new" else None
     title = ""
+    user = get_object_or_404(FacilityUser, id=id) if id != "new" else None
+
+    # Check permissions
+    if user and not request.is_admin and user != request.session.get("facility_user"):
+        # Editing a user, user being edited is not self, and logged in user is not admin
+        raise PermissionDenied()
+    elif settings.package_selected("UserRestricted") and not request.is_admin:
+        # Users cannot create/edit their own data when UserRestricted
+        raise PermissionDenied(_("Please contact a teacher or administrator to receive login information to this installation."))
 
     # Data submitted to create the user.
     if request.method == "POST":  # now, teachers and students can belong to a group, so all use the same form.
-        if not request.is_admin and settings.package_selected("UserRestricted"):
-            raise PermissionDenied(_("Please contact a teacher or administrator to receive login information to this installation."))
 
         form = FacilityUserForm(facility, data=request.POST, instance=user)
         if form.is_valid():
-            if form.cleaned_data["password"]:
-                form.instance.set_password(form.cleaned_data["password"])
+            if form.cleaned_data["password_first"]:
+                form.instance.set_password(form.cleaned_data["password_first"])
             form.save()
 
-            # Admins create users while logged in.
-            if id == "new":
-                if request.is_logged_in:
-                    assert request.is_admin, "Regular users can't create users while logged in."
-                    messages.success(request, _("You successfully created the user."))
-                    return HttpResponseRedirect(request.META.get("PATH_INFO", reverse("homepage")))  # allow them to add more of the same thing.
-                else:
-                    messages.success(request, _("You successfully registered."))
-                    return HttpResponseRedirect("%s?facility=%s" % (reverse("login"), form.data["facility"]))
-            else:
-                messages.success(request, _("User changes saved!"))
+            if getattr(request.session.get("facility_user"), "id", None) == form.instance.id:
+                # Edited: own account; refresh the facility_user setting
+                request.session["facility_user"] = form.instance
+                messages.success(request, _("You successfully updated your user settings."))
+                return HttpResponseRedirect(request.next or reverse("account_management"))
+
+            elif id != "new":
+                # Edited: by admin; someone else's ID
+                messages.success(request, _("User changes saved for user '%s'") % form.instance.get_name())
                 if request.next:
                     return HttpResponseRedirect(request.next)
+
+            elif request.is_admin:
+                # Created: by admin
+                messages.success(request, _("You successfully created user '%s'") % form.instance.get_name())
+                return HttpResponseRedirect(request.META.get("PATH_INFO", request.next or reverse("homepage")))  # allow them to add more of the same thing.
+
+            else:
+                # Created: by self
+                messages.success(request, _("You successfully registered."))
+                return HttpResponseRedirect(request.next or "%s?facility=%s" % (reverse("login"), form.data["facility"]))
 
     # For GET requests
     elif user:
@@ -120,6 +134,8 @@ def edit_facility_user(request, facility, is_teacher=None, id=None):
             "group": request.GET.get("group", None),
             "is_teacher": is_teacher,
         })
+
+    if not title:
         if not request.is_admin:
             title = _("Sign up for an account")
         elif is_teacher:
@@ -186,8 +202,11 @@ def add_group(request, facility):
 @facility_from_request
 @render_to("securesync/login.html")
 def login(request, facility):
-    facilities = list(Facility.objects.all())
     facility_id = facility and facility.id or None
+    facilities = list(Facility.objects.all())
+
+    # Fix for #1211: refresh cached facility info when it's free and relevant
+    refresh_session_facility_info(request, facility_count=len(facilities))
 
     if request.method == 'POST':
         # log out any Django user or facility user
@@ -211,22 +230,32 @@ def login(request, facility):
                 UserLog.begin_user_activity(user, activity_type="login", language=request.language)  # Success! Log the event (ignoring validation failures)
             except ValidationError as e:
                 logging.error("Failed to begin_user_activity upon login: %s" % e)
+
             request.session["facility_user"] = user
             messages.success(request, _("You've been logged in! We hope you enjoy your time with KA Lite ") +
                                         _("-- be sure to log out when you finish."))
-            landing_page = reverse("coach_reports") if form.get_user().is_teacher else None
-            landing_page = landing_page or (reverse("account_management") if not settings.package_selected("RPi") else reverse("homepage"))
+
+            # Send them back from whence they came
+            landing_page = form.cleaned_data["callback_url"]
+            if not landing_page:
+                # Just going back to the homepage?  We can do better than that.
+                landing_page = reverse("coach_reports") if form.get_user().is_teacher else None
+                landing_page = landing_page or (reverse("account_management") if not settings.package_selected("RPi") else reverse("homepage"))
 
             return HttpResponseRedirect(form.non_field_errors() or request.next or landing_page)
+
         else:
             messages.error(
                 request,
-                strip_tags(form.non_field_errors())
-                or _("There was an error logging you in. Please correct any errors listed below, and try again.")
+                _("There was an error logging you in. Please correct any errors listed below, and try again."),
             )
 
     else:  # render the unbound login form
-        form = LoginForm(initial={"facility": facility_id})
+        referer = urlparse.urlparse(request.META["HTTP_REFERER"]).path if request.META.get("HTTP_REFERER") else None
+        # never use the homepage as the referer
+        if referer in [reverse("homepage"), reverse("add_facility_student")]:
+            referer = None
+        form = LoginForm(initial={"facility": facility_id, "callback_url": referer})
 
     return {
         "form": form,
@@ -249,4 +278,3 @@ def logout(request):
     if next[0] != "/":
         next = "/"
     return HttpResponseRedirect(next)
-

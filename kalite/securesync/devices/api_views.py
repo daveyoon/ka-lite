@@ -122,7 +122,7 @@ def register_device(request):
     try:
         device_zone = DeviceZone.objects.get(device=client_device, zone=zone)
         device_zone.save()  # re-save, to give it a central server signature that will be honored by old clients
-    except:
+    except DeviceZone.DoesNotExist:
         device_zone = DeviceZone(device=client_device, zone=zone)
         device_zone.save()     # create the DeviceZone for the new device, with an 'upgraded' signature
 
@@ -199,10 +199,6 @@ def get_server_info(request):
         if field == "version":
             device = device or Device.get_own_device()
             device_info[field] = device.get_version()
-
-        elif field == "video_count":
-            from main.models import VideoFile
-            device_info[field] = VideoFile.objects.filter(percent_complete=100).count() if not settings.CENTRAL_SERVER else 0
 
         elif field == "device_name":
             device = device or Device.get_own_device()

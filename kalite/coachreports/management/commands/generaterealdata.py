@@ -33,7 +33,6 @@ from django.db import transaction
 
 import settings
 import securesync
-from main import topicdata
 from main.models import ExerciseLog, VideoLog, UserLog
 from securesync.models import Facility, FacilityUser, FacilityGroup, Device, DeviceMetadata
 from settings import LOG as logging
@@ -134,7 +133,7 @@ def generate_fake_facility_groups(names=("Class 4E", "Class 5B"), facilities=Non
     return (facility_groups, facilities)
 
 
-def generate_fake_facility_users(nusers=20, facilities=None, facility_groups=None, password="blah"):
+def generate_fake_facility_users(nusers=20, facilities=None, facility_groups=None, password="hellothere"):
     """Add the given fake facility users to each of the given fake facilities.
     If no facilities are given, they are created."""
 
@@ -302,7 +301,7 @@ def generate_fake_exercise_logs(facility_user=None, topics=topics, start_date=da
                     seconds_per_attempt = 10 * (1 + user_settings["speed_of_learning"] * random.random())
                     time_to_navigate = 15 * (0.5 + random.random())  #between 7.5s and 22.5s
                     time_to_logout = 5 * (0.5 + random.random()) # between 2.5 and 7.5s
-                    if settings.USER_LOG_MAX_RECORDS_PER_USER != 0:
+                    if UserLog.is_enabled():
                         ulog = UserLog(
                             user=facility_user,
                             activity_type=1,
@@ -413,7 +412,7 @@ def generate_fake_video_logs(facility_user=None, topics=topics, start_date=datet
                     date_completed = datetime.datetime.now() - time_delta_completed
 
                 try:
-                    vlog = VideoLog.objects.get(user=facility_user, youtube_id=video["youtube_id"])
+                    vlog = VideoLog.objects.get(user=facility_user, video_id=video["id"])
                 except VideoLog.DoesNotExist:
 
                     logging.info("Creating video log: %-12s: %-45s (%4.1f%% watched, %d points)%s" % (
@@ -425,6 +424,7 @@ def generate_fake_video_logs(facility_user=None, topics=topics, start_date=datet
                     ))
                     vlog = VideoLog(
                         user=facility_user,
+                        video_id=video["id"],
                         youtube_id=video["youtube_id"],
                         total_seconds_watched=total_seconds_watched,
                         points=points,
@@ -437,16 +437,13 @@ def generate_fake_video_logs(facility_user=None, topics=topics, start_date=datet
 
     return video_logs
 
-def generate_fake_coachreport_logs():
-    teacher_password = make_password('hellothere')
+def generate_fake_coachreport_logs(password="hellothere"):
     t,_ = FacilityUser.objects.get_or_create(
         facility=Facility.objects.all()[0],
-        username=random.choice(firstnames),
-        defaults={
-            'password' : teacher_password,
-            'is_teacher' : True,
-        }
+        username=random.choice(firstnames)
     )
+    t.set_password(password)
+
     # TODO: create flags later
     num_logs = 20
     logs = []
